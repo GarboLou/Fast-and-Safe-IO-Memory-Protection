@@ -10,6 +10,8 @@
 #
 # Normal rules (sorted alphabetically)
 #
+linux-6.0.3/*
+linux-6.0.3.tar.gz
 .*
 *.a
 *.asn1.[ch]
