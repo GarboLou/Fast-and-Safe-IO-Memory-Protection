@@ -10,8 +10,15 @@
 #
 # Normal rules (sorted alphabetically)
 #
+utils/setup-server.sh
 linux-6.0.3/*
 linux-6.0.3.tar.gz
+*.log
+*.png
+*.out
+utils/logs/
+utils/reports/
+utils/collect_iio_occ
 .*
 *.a
 *.asn1.[ch]

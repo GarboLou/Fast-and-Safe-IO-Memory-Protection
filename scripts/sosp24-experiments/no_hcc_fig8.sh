@@ -1,3 +1,4 @@
+./clean_logs.sh
 cd ..
 
 echo "Running mlc0 experiment... this may take a few minutes"

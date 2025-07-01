@@ -28,14 +28,14 @@ cpu_utils = []
 mlc_tputs = []
 
 for i in range(NUM_RUNS):
-    with open(FILE_NAME + '-RUN-' + str(i) + '/iperf.bw.rpt') as f1:
+    with open(FILE_NAME + '-RUN-server-' + str(i) + '/iperf.bw.rpt') as f1:
         for line in f1:
             tput = float(line.split()[-1])
             if (tput > 0):
                 net_tputs.append(tput)
             break
 
-    with open(FILE_NAME + '-RUN-' + str(i) + '/retx.rpt') as f1:
+    with open(FILE_NAME + '-RUN-server-' + str(i) + '/retx.rpt') as f1:
         for line in f1:
             line_str = line.split()
             if (line_str[0] == 'Retx_percent:'):  # always come last so we can break
@@ -47,7 +47,7 @@ for i in range(NUM_RUNS):
                 sent = float(line_str[-1])
                 sent_packets.append(sent)
 
-    with open(FILE_NAME + '-RUN-' + str(i) + '/membw.rpt') as f1:
+    with open(FILE_NAME + '-RUN-server-' + str(i) + '/membw.rpt') as f1:
         try:
             for line in f1:
                 line_str = line.split()
@@ -61,7 +61,7 @@ for i in range(NUM_RUNS):
         except Exception as e:
             mem_bws.append(0)
 
-    with open(FILE_NAME + '-RUN-' + str(i) + '/cpu_util.rpt') as f1:
+    with open(FILE_NAME + '-RUN-server-' + str(i) + '/cpu_util.rpt') as f1:
         for line in f1:
             line_str = line.split()
             if (line_str[0] != 'avg_cpu_util:'):
@@ -72,7 +72,7 @@ for i in range(NUM_RUNS):
                     cpu_utils.append(cpu_util)
                 break
     try: 
-        with open(FILE_NAME + '-RUN-' + str(i) + '/pcie.rpt') as f1:
+        with open(FILE_NAME + '-RUN-server-' + str(i) + '/pcie.rpt') as f1:
             for line in f1:
                 line_str = line.split()
                 if (line_str[0] == 'PCIe_wr_tput:'):

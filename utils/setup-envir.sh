@@ -1,3 +1,5 @@
+source setup-server.sh
+
 help()
 {
     echo "Usage: setup-envir [ -H | --home (home directory)]
@@ -29,11 +31,11 @@ fi
 eval set -- "$OPTS"
 
 #default values
-home='/home/benny'
+home=$DEP_DIR
 mtu=4000
 ddio=0
-intf="ens2f1"
-addr="192.168.11.116"
+intf=$INTF
+addr=$IP
 opt=1
 buf=1
 ecn=1
@@ -143,7 +145,7 @@ fi
 #Enable aRFS, TSO, GRO for the interface
 if [ "$opt" = 1 ]
 then
-    cd $home/terabit-network-stack-profiling/
+    cd $home/Understanding-network-stack-overheads-SIGCOMM-2021/
     echo "Enabling TCP optimizations (TSO, GRO, aRFS)..."
     sudo python network_setup.py $intf --arfs --mtu $mtu --sock-size --tso --gro --ring-buffer $ring_buffer
     cd -
@@ -154,10 +156,10 @@ fi
 cd $home/ddio-bench/
 if [ "$ddio" = 1 ]; then
     echo "Enabling DDIO..."
-    ./change-ddio-on
+    sudo ./change-ddio-on
 else
     echo "Disabling DDIO..."
-    ./change-ddio-off
+    sudo ./change-ddio-off
 fi
 cd -
 
@@ -198,5 +200,4 @@ else
     echo "Disabling PFC..."
     sudo mlnx_qos -i $intf --pfc 0,0,0,0,0,0,0,0
 fi
-
 
