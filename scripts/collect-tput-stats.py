@@ -8,6 +8,7 @@ NUM_RUNS = int(sys.argv[2])
 COLLECT_MLC_TPUT = int(sys.argv[3])
 
 FILE_NAME = "../utils/reports/" + EXP_NAME
+print("Collecting throughput metrics for experiment:", EXP_NAME, "with", NUM_RUNS, "runs and MLC throughput collection set to", COLLECT_MLC_TPUT)
 command = 'mkdir -p ' + FILE_NAME
 result = subprocess.run(command, shell=True, capture_output=True, text=True)
 
@@ -51,7 +52,7 @@ for i in range(NUM_RUNS):
         try:
             for line in f1:
                 line_str = line.split()
-                if (line_str[0] != 'Node0_total_bw:'):
+                if (line_str[0] != 'Node1_total_bw:'):
                     continue
                 else:
                     membw = float(line_str[-1])

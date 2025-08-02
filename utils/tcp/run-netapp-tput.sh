@@ -8,6 +8,7 @@ MODE="client"
 OUT_DIR="tcptest"
 SERVER_IP=$SERVER_NIC_IP
 CPU_MASK="40,41,42,43,44"
+CPU_MASK_CLIENT="0,1,2,3,4"
 NUM_SERVERS=1
 NUM_CLIENTS=1
 PORT=3000
@@ -97,6 +98,7 @@ echo "Running $SCRIPT_NAME with the following parameters:
   Bandwidth: $BANDWIDTH"
 
 IFS=',' read -ra core_values <<< $CPU_MASK
+IFS=',' read -ra core_values_client <<< $CPU_MASK_CLIENT
 
 mkdir -p ../reports #Directory to store collected logs
 mkdir -p ../reports/$OUT_DIR #Directory to store collected logs
@@ -112,6 +114,7 @@ function collect_stats() {
 counter=0
 if [ "$MODE" = "server" ]; then
     sudo pkill -9 -f iperf #kill existing iperf servers/clients
+    sleep 1
     while [ $counter -lt $NUM_SERVERS ]; do
         index=$(( counter % ${#core_values[@]} ))
         core=${core_values[index]}
@@ -127,9 +130,10 @@ if [ "$MODE" = "server" ]; then
     collect_stats
 elif [ "$MODE" = "client" ]; then
     sudo pkill -9 -f iperf #kill existing iperf servers/clients
+    sleep 1
     while [ $counter -lt $NUM_CLIENTS ]; do
-        index=$(( counter % ${#core_values[@]} ))
-        core=${core_values[index]}
+        index=$(( counter % ${#core_values_client[@]} ))
+        core=${core_values_client[index]}
         echo "Starting client $counter on core $core"
         sudo taskset -c $core nice -n -20 iperf3 -c $SERVER_IP --port $(($PORT+$(($counter%$NUM_SERVERS)))) -t 10000 -C dctcp -b $BANDWIDTH &
         ((counter++))

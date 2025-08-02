@@ -152,52 +152,52 @@ then
 fi
 
 
-#Enable/disable DDIO
-cd $home/ddio-bench/
-if [ "$ddio" = 1 ]; then
-    echo "Enabling DDIO..."
-    sudo ./change-ddio-on
-else
-    echo "Disabling DDIO..."
-    sudo ./change-ddio-off
-fi
-cd -
+# #Enable/disable DDIO
+# cd $home/ddio-bench/
+# if [ "$ddio" = 1 ]; then
+#     echo "Enabling DDIO..."
+#     sudo ./change-ddio-on
+# else
+#     echo "Disabling DDIO..."
+#     sudo ./change-ddio-off
+# fi
+# cd -
 
 
-#Enable prefetching
-if [ "$hwpref" = 1 ]
-then
-    echo "Enabling hardware prefetching..."
-    modprobe msr
-    wrmsr -a 0x1a4 0
-else
-    echo "Disabling hardware prefetching..."
-    modprobe msr
-    wrmsr -a 0x1a4 1
-fi
+# #Enable prefetching
+# if [ "$hwpref" = 1 ]
+# then
+#     echo "Enabling hardware prefetching..."
+#     modprobe msr
+#     wrmsr -a 0x1a4 0
+# else
+#     echo "Disabling hardware prefetching..."
+#     modprobe msr
+#     wrmsr -a 0x1a4 1
+# fi
 
-#Enable PFC (on QoS 0)
-if [ "$pfc" = 1 ]
-then
-    echo "Enabling PFC..."
-    mlnx_qos -i $intf --pfc 1,0,0,0,0,0,0,0
-    tc_wrap.py -i $intf
-    tc_wrap.py -i $intf -u 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+# #Enable PFC (on QoS 0)
+# if [ "$pfc" = 1 ]
+# then
+#     echo "Enabling PFC..."
+#     mlnx_qos -i $intf --pfc 1,0,0,0,0,0,0,0
+#     tc_wrap.py -i $intf
+#     tc_wrap.py -i $intf -u 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
 
-    # To enable on other QoS, modify the above code accordingly
-    # For eg., to enable PFC on QoS 1 or 2 us the code below
+#     # To enable on other QoS, modify the above code accordingly
+#     # For eg., to enable PFC on QoS 1 or 2 us the code below
 
-    # Qos 1
-    #  mlnx_qos -i $intf --pfc 0,1,0,0,0,0,0,0
-    #  tc_wrap.py -i $intf
-    #  tc_wrap.py -i $intf -u 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
+#     # Qos 1
+#     #  mlnx_qos -i $intf --pfc 0,1,0,0,0,0,0,0
+#     #  tc_wrap.py -i $intf
+#     #  tc_wrap.py -i $intf -u 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
 
-    # Qos 2
-    # mlnx_qos -i $intf --pfc 0,0,1,0,0,0,0,0
-    # tc_wrap.py -i $intf
-    # tc_wrap.py -i $intf -u 2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2
-else
-    echo "Disabling PFC..."
-    sudo mlnx_qos -i $intf --pfc 0,0,0,0,0,0,0,0
-fi
+#     # Qos 2
+#     # mlnx_qos -i $intf --pfc 0,0,1,0,0,0,0,0
+#     # tc_wrap.py -i $intf
+#     # tc_wrap.py -i $intf -u 2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2
+# else
+#     echo "Disabling PFC..."
+#     sudo mlnx_qos -i $intf --pfc 0,0,0,0,0,0,0,0
+# fi
 
