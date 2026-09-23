@@ -8,7 +8,7 @@ MODE="client"
 OUT_DIR="tcptest"
 SERVER_IP=$SERVER_NIC_IP
 CPU_MASK="40,41,42,43,44"
-CPU_MASK_CLIENT="0,1,2,3,4"
+CPU_MASK_CLIENT="0,2,4,6,8"
 NUM_SERVERS=1
 NUM_CLIENTS=1
 PORT=3000
@@ -23,13 +23,14 @@ help()
                [ -p | --port (port number for the first connection) ]
                [ -a | --addr (ip address of the server, only use this option at client) ]
                [ -c | --cores (comma separated cpu core values to run the clients/servers at, for eg., cpu=4,8,12,16; if the number of clients/servers > the number of input cpu cores, the clients/servers will round-robin over the provided input cores; recommended to run on NUMA node local to the NIC for maximum performance) ]
+               [ -l | --client_cores (comma separated client cpu core values to run the clients/servers at, for eg., cpu=4,8,12,16; if the number of clients/servers > the number of input cpu cores, the clients/servers will round-robin over the provided input cores; recommended to run on NUMA node local to the NIC for maximum performance) ]
                [ -b | --bandwidth (bandwidth to send at in bits/sec)]
                [ -h | --help  ]"
     exit 2
 }
 
-SHORT=m:,o:,S:,C:,p:,a:,c:,b:h
-LONG=mode:,outdir:,num_servers:,num_clients:,port:,addr:,cores:,bandwidth:,help
+SHORT=m:,o:,S:,C:,p:,a:,c:,l:,b:h
+LONG=mode:,outdir:,num_servers:,num_clients:,port:,addr:,cores:,client_cores:,bandwidth:,help
 OPTS=$(getopt -a -n run-netapp-tput --options $SHORT --longoptions $LONG -- "$@")
 VALID_ARGUMENTS=$# # Returns the count of arguments that are in short or long options
 
@@ -69,6 +70,10 @@ do
       CPU_MASK="$2"
       shift 2
       ;;
+    -l | --client_cores )
+      CPU_MASK_CLIENT="$2"
+      shift 2
+      ;;
     -b | --bandwidth )
       BANDWIDTH="$2"
       shift 2
@@ -101,10 +106,22 @@ IFS=',' read -ra core_values <<< $CPU_MASK
 IFS=',' read -ra core_values_client <<< $CPU_MASK_CLIENT
 
 mkdir -p ../reports #Directory to store collected logs
-mkdir -p ../reports/$OUT_DIR #Directory to store collected logs
+# mkdir -p ../reports/$OUT_DIR #Directory to store collected logs
+if [ ! -d "../reports/$OUT_DIR" ]; then
+    mkdir -p "../reports/$OUT_DIR"
+    echo "Directory '../reports/$OUT_DIR' created."
+else
+    echo "Directory '../reports/$OUT_DIR' already exists."
+fi
 mkdir -p ../logs #Directory to store collected logs
-mkdir -p ../logs/$OUT_DIR #Directory to store collected logs
-# rm -f ../logs/$OUT_DIR/iperf.bw.log
+# mkdir -p ../logs/$OUT_DIR #Directory to store collected logs
+if [ ! -d "../logs/$OUT_DIR" ]; then
+    mkdir -p "../logs/$OUT_DIR"
+    echo "Directory '../logs/$OUT_DIR' created."
+else
+    echo "Directory '../logs/$OUT_DIR' already exists."
+fi
+rm -f ../logs/$OUT_DIR/iperf.bw.log
 
 function collect_stats() {
   echo "Collecting app throughput for TCP server..."
@@ -134,8 +151,9 @@ elif [ "$MODE" = "client" ]; then
     while [ $counter -lt $NUM_CLIENTS ]; do
         index=$(( counter % ${#core_values_client[@]} ))
         core=${core_values_client[index]}
+        log_path=$DEP_DIR/Fast-and-Safe-IO-Memory-Protection/utils/logs/$OUT_DIR/iperf.bw.log
         echo "Starting client $counter on core $core"
-        sudo taskset -c $core nice -n -20 iperf3 -c $SERVER_IP --port $(($PORT+$(($counter%$NUM_SERVERS)))) -t 10000 -C dctcp -b $BANDWIDTH &
+        sudo taskset -c $core nice -n -20 iperf3 -c $SERVER_IP --port $(($PORT+$(($counter%$NUM_SERVERS)))) -i 30 -f m --logfile $log_path -t 10000 -C dctcp -b $BANDWIDTH &
         ((counter++))
     done
 else

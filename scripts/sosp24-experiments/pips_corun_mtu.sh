@@ -9,7 +9,7 @@ source ../../utils/setup-server.sh
 cd ..
 
 working_dir=$(pwd)
-echo "Running flow5 experiment... this may take a few minutes"
+echo "Running mtu experiment... this may take a few minutes"
 
 iommu_on=$(grep -o intel_iommu=on /proc/cmdline)
 iommu_config=""
@@ -32,25 +32,22 @@ fi
 
 warmup_time=10
 
-# number of flows: 5 10 20 40
-# for i in 5 40; do
-for i in 5; do
+for i in 4000; do
     # for j in 8k 2048k; do # fio block sizes
     for j in 4k; do # fio block sizes
         cd $working_dir
         cur_time=$(date +"%m-%d-%H-%M")
-        format_i=$(printf "%02d\n" $i)
+        format_i=$(printf "%04d\n" $i)
         format_j=$(printf "%s\n" $j)
         # exp_name="$(uname -r)-flow${format_i}-${iommu_config}-ofed$(ofed_version)-test2-siyuan"
         # exp_name="$(uname -r)-${iommu_config}-flow-${format_i}-core4-warmup${warmup_time}-leshna"
-        exp_name="$(uname -r)-${iommu_config}-flow-${format_i}-fio-${format_j}"
+        exp_name="$(uname -r)-${iommu_config}-mtu-${format_i}-fio-${format_j}"
         echo $exp_name
-        exp_name="${exp_name}-randwrite"
-        bash ./run-ssd-nic-experiment.sh -E "$exp_name" --num_servers $i --num_clients $i -c '64,68,70,74,78' --bandwidth '100g' --bs $j
+        exp_name="${exp_name}-990pro"
+        bash ./run-ssd-nic-experiment.sh -E "$exp_name" --num_servers 5 --num_clients 5 -c '64,68,70,74,78' --bandwidth '100g' --bs $j --MTU $i
         # sudo bash -c "./run-dctcp-tput-experiment.sh -E '$exp_name' -M 4000 --num_servers $i --num_clients $i -c '0,4,8,12,16' --ring_buffer 256 --buf 1 --mlc_cores 'none' --bandwidth '100g' --server_intf $SERVER_INTF --client_intf $CLIENT_INTF"
 
     # > /dev/null 2>&1
-        sleep 10
         python3 report-tput-metrics.py $exp_name tput,drops,acks,iommu,cpu
         cd ../utils/reports/$exp_name
 

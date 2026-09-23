@@ -14,14 +14,14 @@ iodepth_batch_submit=${SUBMIT_BATCH}
 iodepth_batch_complete_min=${COMP_BATCH}
 iodepth_batch_complete_max=${IODEPTH}
 
-cpus_allowed=${CPU_MASK}
-cpus_allowed_policy=split
+offset=2G
+size=64G
 
 write_bw_log=${OUT_DIR}/fio_bw_${RW}_${SIZE}
 write_iops_log=${OUT_DIR}/fio_iops_${RW}_${SIZE}
 write_lat_log=${OUT_DIR}/fio_lat_${RW}_${SIZE}
-log_avg_msec=10000
+log_avg_msec=5000
 
 [test]
 rw=${RW}
-filename=/dev/nvme1n1
+filename=/dev/nvme0n1

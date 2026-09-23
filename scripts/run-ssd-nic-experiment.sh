@@ -52,11 +52,11 @@ init_port=3000
 ddio=0
 mtu=4000
 dur=20
-cpu_mask="40,44,48,52,56"
+cpu_mask="42,44,48,52,56"
 cpu_mask_fio="64-79"
 mlc_cores="none"
 mlc_dur=100
-ring_buffer=256
+ring_buffer=1024
 buf=1
 bandwidth="100g"
 num_runs=1
@@ -135,9 +135,9 @@ function cleanup() {
     # sshpass -p $password ssh -tt "$uname@$ssh_hostname" 'echo "$password" | sudo -S pkill -9 -f iperf;'
     sshpass -p $password ssh -tt $uname@$ssh_hostname "printf '%s\n' '$password' | sudo -S pkill -9 -f iperf"
     ## IOVA logging
-    sudo echo 0 > /sys/kernel/debug/tracing/tracing_on
-    sudo echo 0 > /sys/kernel/debug/tracing/options/overwrite
-    sudo echo 5000 > /sys/kernel/debug/tracing/buffer_size_kb
+    sudo bash -c "echo 0 > /sys/kernel/debug/tracing/tracing_on"
+    sudo bash -c "echo 0 > /sys/kernel/debug/tracing/options/overwrite"
+    sudo bash -c "echo 5000 > /sys/kernel/debug/tracing/buffer_size_kb"
     # reset interface
     # sudo ip link set $server_intf down
     # sleep 2
@@ -149,6 +149,30 @@ function cleanup() {
 #first run very long running MLC app, to find out network tput
 for ((j = 0; j < $num_runs; j += 1)); do
   echo "running instance $j"
+
+  OUT_DIR="$exp-RUN-server-$j"
+  mkdir -p ../utils/reports #Directory to store collected logs
+  # mkdir -p ../reports/$OUT_DIR #Directory to store collected logs
+  if [ ! -d "../utils/reports/$OUT_DIR" ]; then
+      mkdir -p "../utils/reports/$OUT_DIR"
+      echo "Directory '../utils/reports/$OUT_DIR' created."
+  else
+      echo "Directory '../utils/reports/$OUT_DIR' already exists."
+      rm -r "../utils/reports/$OUT_DIR"
+      mkdir -p "../utils/reports/$OUT_DIR"
+      echo "Directory '../utils/reports/$OUT_DIR' recreated."
+  fi
+  mkdir -p ../utils/logs #Directory to store collected logs
+  # mkdir -p ../logs/$OUT_DIR #Directory to store collected logs
+  if [ ! -d "../utils/logs/$OUT_DIR" ]; then
+      mkdir -p "../utils/logs/$OUT_DIR"
+      echo "Directory '../utils/logs/$OUT_DIR' created."
+  else
+      echo "Directory '../utils/logs/$OUT_DIR' already exists."
+      rm -r "../utils/logs/$OUT_DIR"
+      mkdir -p "../utils/logs/$OUT_DIR"
+      echo "Directory '../utils/logs/$OUT_DIR' recreated."
+  fi
 
   #### pre-run cleanup -- kill any existing clients/screen sessions
   cleanup
@@ -178,10 +202,11 @@ for ((j = 0; j < $num_runs; j += 1)); do
   progress_bar 10 1
 
   #### setup and start servers
-  # echo "setting up server config..."
+  echo "setting up server config..."
   # sudo bash /home/benny/restart.sh
-  # cd $setup_dir
-  # sudo bash setup-envir.sh -i $server_intf -a $server -m $mtu -d $ddio --ring_buffer $ring_buffer --buf $buf -f 1 -r 0 -p 0 -e 1 -o 1
+  cd $setup_dir
+  sudo bash setup-envir.sh -i $server_intf -a $server -m $mtu --ring_buffer $ring_buffer --buf $buf
+  sleep 5
   # cd -
 
   echo "starting server instances..."
@@ -191,14 +216,14 @@ for ((j = 0; j < $num_runs; j += 1)); do
   cd -
 
   echo "turning on IOVA logging via ftrace"
-  sudo echo > /sys/kernel/debug/tracing/trace
-  sudo echo 1 > /sys/kernel/debug/tracing/tracing_on
+  sudo bash -c "echo > /sys/kernel/debug/tracing/trace"
+  sudo bash -c "echo 1 > /sys/kernel/debug/tracing/tracing_on"
 
   #### setup and start clients
   echo "setting up and starting clients..."
   echo "starting client session on $ssh_hostname, username: $uname, password: $password"
   echo "command to send is 'screen -dmS client_session bash -c \"cd $exp_dir && sudo bash $exp_dir/run-netapp-tput.sh -m client -a $server -C $num_clients -S $num_servers -o $exp-RUN-client-$j -p $init_port -c $cpu_mask -b $bandwidth\"'"
-  sshpass -p $password ssh $uname@$ssh_hostname 'screen -dmS client_session bash -c "cd '$exp_dir'; sudo bash '$exp_dir'/run-netapp-tput.sh -m client -a '$server' -C '$num_clients' -S '$num_servers' -o '$exp'-RUN-client-'$j' -p '$init_port' -c '$cpu_mask' -b '$bandwidth'; exec bash"'
+  sshpass -p $password ssh $uname@$ssh_hostname 'screen -dmS client_session bash -c "cd '$setup_dir'; sudo bash '$setup_dir'/setup-envir.sh -i '$client_intf' -a '$client' -m '$mtu' --ring_buffer '$ring_buffer' --buf '$buf'; sleep 5; cd '$exp_dir'; sudo bash '$exp_dir'/run-netapp-tput.sh -m client -a '$server' -C '$num_clients' -S '$num_servers' -o '$exp'-RUN-client-'$j' -p '$init_port' -c '$client_cpu_mask' -b '$bandwidth'; exec bash"'
   # sshpass -p $password ssh $uname@$ssh_hostname 'screen -dmS client_session bash -c "cd '$setup_dir'; sudo bash '$setup_dir'/setup-envir.sh -i '$client_intf' -a '$client' -m '$mtu' -d '$ddio' --ring_buffer '$ring_buffer' --buf '$buf' -f 1 -r 0 -p 0 -e 1 -o 1; cd '$exp_dir'; sudo bash '$exp_dir'/run-netapp-tput.sh -m client -a '$server' -C '$num_clients' -S '$num_servers' -o '$exp'-RUN-client-'$j' -p '$init_port' -c '$cpu_mask' -b '$bandwidth'; exec bash"'
 
   #### warmup
@@ -223,9 +248,11 @@ for ((j = 0; j < $num_runs; j += 1)); do
   sleep $(($dur * 2))
 
   # Get FIO PID
-  FIO_PID=$(cat /tmp/fio_pid.txt)
-  echo "Killing FIO process with PID: $FIO_PID"
-  sudo kill -2 $FIO_PID
+  sudo killall fio
+  sleep 5
+  # FIO_PID=$(cat /tmp/fio_pid.txt)
+  # echo "Killing FIO process with PID: $FIO_PID"
+  # sudo kill -2 $FIO_PID
 
   #post-run cleanup
   cleanup
@@ -239,6 +266,7 @@ else
 fi
 
 #collect info from all runs
+cd $home/Fast-and-Safe-IO-Memory-Protection/scripts
 if [ "$mlc_cores" = "none" ]; then
     sudo python3 collect-tput-stats.py $exp $num_runs 0
 else

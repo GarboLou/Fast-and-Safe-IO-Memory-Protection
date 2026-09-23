@@ -12,6 +12,7 @@ print("Collecting throughput metrics for experiment:", EXP_NAME, "with", NUM_RUN
 command = 'mkdir -p ' + FILE_NAME
 result = subprocess.run(command, shell=True, capture_output=True, text=True)
 
+print("Collecting throughput stats from all runs and storing to", FILE_NAME + '/tput_metrics.dat')
 
 net_tputs = []
 retx_rates = []

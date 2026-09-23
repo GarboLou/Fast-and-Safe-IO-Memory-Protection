@@ -212,10 +212,10 @@ def plot_all_subplots(iommu_off_all_data, iommu_on_all_data, x_labels, title_key
 
 def plot_tput_pips():
     x_labels =  ["05", "10", "20", "40"]
-    iommu_off_all_data = get_data(prefix="6.0.0-060000-generic-", iommu_str="iommu-off", suffix="test-pips")
-    iommu_on_all_data = get_data(prefix="6.0.0-060000-generic-", iommu_str="iommu-on", suffix="test-pips")
+    iommu_off_all_data = get_data(prefix="6.0.3-vanilla-", iommu_str="iommu-off", suffix="test-pips-client-6.12")
+    iommu_on_all_data = get_data(prefix="6.0.3-vanilla-", iommu_str="iommu-on", suffix="test-pips-client-6.12")
     
-    plot_all_subplots(iommu_off_all_data, iommu_on_all_data, x_labels, 'PIPS')
+    plot_all_subplots(iommu_off_all_data, iommu_on_all_data, x_labels, 'PIPS-NIC')
 
 
 def plot_tput_f_and_s():
@@ -254,6 +254,14 @@ def plot_ring_buf_exp():
     
     plot_all_subplots(iommu_off_all_data, iommu_on_all_data, x_labels, '6.12.9-ring-buffer')
 
+
+def plot_ring_buf_exp_pips():
+    x_labels =  ["256", "512", "1024", "2048"]
+    iommu_off_all_data = get_data_ring(prefix="6.12.43-vanilla-", iommu_str="iommu-off")
+    iommu_on_all_data = get_data_ring(prefix="6.12.43-vanilla-", iommu_str="iommu-on")
+
+    plot_all_subplots(iommu_off_all_data, iommu_on_all_data, x_labels, '6.12.43-ring-buffer')
+
 # plot_tput_f_and_s()
 # plot_tput_new_kernel()
 # plot_tput_new_ofed()
@@ -263,3 +271,5 @@ def plot_ring_buf_exp():
 # plot_ring_buf_exp()
 
 plot_tput_pips()
+
+# plot_ring_buf_exp_pips()

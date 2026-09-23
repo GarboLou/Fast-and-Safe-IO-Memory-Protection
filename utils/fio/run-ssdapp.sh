@@ -43,16 +43,54 @@ MLC_DIR=$HOME/mlc/Linux
 fio_template="$EXP_DIR/jobfiles/bs_rw_logging.fio"
 
 # FIO default parameters
+DEVICE="/dev/nvme0n1" # nvme0
 BS=4k
 IODEPTH=8
 RW="randread"
 SUBMIT_BATCH=4
 COMP_BATCH=4
 NUM_THREADS=8
+IOENGINE="libaio"
+DIRECT=1
+RANDREPEAT=0           # decorrelate random sequences
+NORANDOMMAP=1          # independent random accesses per job
+LOG_AVG_MSEC=1000      # 1s log interval for *_bw/lat logs
+RUNTIME=1200          # run time of 20 minutes
+
 
 UNAME=$CLIENT_USERNAME
 SSH_HOSTNAME=$CLIENT_SSH_IP
 PASSWORD=$CLIENT_PWD
+
+core_values=(40 45 51 57 63 69 73 79) # nvme0
+# Per-thread slice assignment (GiB)
+BASE_OFFSET_GIB=512      # first thread starts at 512 GiB
+SLICE_SIZE_GIB=32       # each thread gets 32 GiB
+
+########################################
+# Derived / checks
+########################################
+if (( ${#core_values[@]} < NUM_THREADS )); then
+  echo "ERROR: core_values has only ${#core_values[@]} entries but NUM_THREADS=$NUM_THREADS" >&2
+  exit 1
+fi
+
+if [[ ! -b "$DEVICE" ]]; then
+  echo "ERROR: $DEVICE is not a block device." >&2
+  exit 1
+fi
+
+GIB=$((1024*1024*1024))
+BASE_OFFSET_BYTES=$((BASE_OFFSET_GIB * GIB))
+SLICE_SIZE_BYTES=$((SLICE_SIZE_GIB * GIB))
+TOTAL_REQUIRED_BYTES=$((BASE_OFFSET_BYTES + NUM_THREADS * SLICE_SIZE_BYTES))
+
+DEVICE_SIZE_BYTES=$(blockdev --getsize64 "$DEVICE")
+if (( TOTAL_REQUIRED_BYTES > DEVICE_SIZE_BYTES )); then
+  echo "ERROR: Need $(numfmt --to=iec $TOTAL_REQUIRED_BYTES) but device size is $(numfmt --to=iec $DEVICE_SIZE_BYTES)." >&2
+  echo "Reduce NUM_THREADS or SLICE_SIZE_GIB, or increase BASE_OFFSET_GIB." >&2
+  exit 1
+fi
 
 
 while :
@@ -82,15 +120,44 @@ echo "Running $RW test with block size $BS..."
 # Generate a concrete .fio file for this test
 fio_jobfile="/tmp/ladio_${RW}_${BS}_logging.fio"
 log_path=$DEP_DIR/Fast-and-Safe-IO-Memory-Protection/utils/logs/$OUT_DIR
-mkdir -p "$log_path"
+# if [ ! -d "$log_path" ]; then
+#     mkdir -p "$log_path"
+#     echo "Directory '$log_path' created."
+# else
+#     echo "Directory '$log_path' already exists."
+#     rm -r "$log_path"
+#     mkdir -p "$log_path"
+#     echo "Directory '$log_path' recreated."
+# fi
 sed "s|\${SIZE}|$BS|g; s|\${IODEPTH}|$IODEPTH|g; s|\${RW}|$RW|g; s|\${OUT_DIR}|$log_path|g; s|\${SUBMIT_BATCH}|$SUBMIT_BATCH|g; s|\${COMP_BATCH}|$COMP_BATCH|g; s|\${NUM_THREADS}|$NUM_THREADS|g; s|\${CPU_MASK}|$CPU_MASK|g;" "$fio_template" > "$fio_jobfile"
 
-sudo -E taskset -c $CPU_MASK fio $fio_jobfile --terse=3 --output=$log_path/fio_bw_${RW}_${BS} > /dev/null 2>&1 < /dev/null &
-WRAPPER_PID=$!
-sleep 1 # Wait for the wrapper to start
-FIO_PID=$(pgrep -P $WRAPPER_PID fio)  # Get child PID of the wrapper (actual fio process)
-echo $FIO_PID > /tmp/fio_pid.txt
-echo "FIO process started with PID: $FIO_PID"
 
-# sleep 10
-# sudo pkill -x fio
+for ((idx=0; idx<NUM_THREADS; idx++)); do
+  core=${core_values[idx]}
+  job_offset_bytes=$(( BASE_OFFSET_BYTES + idx * SLICE_SIZE_BYTES ))
+
+  out_txt="${log_path}/rr${idx}_bs${bs}.out"
+  out_json="${log_path}/rr${idx}_bs${bs}.json"
+  bw_log="${log_path}/bw_rr${idx}_bs${bs}"
+  lat_log="${log_path}/lat_rr${idx}_bs${bs}"
+
+  echo "  -> rr${idx}: core ${core}, offset $(numfmt --to=iec $job_offset_bytes), size ${SLICE_SIZE_GIB}GiB"
+  taskset -c "${core}" fio \
+    --name="rr${idx}" \
+    --filename="${DEVICE}" \
+    --rw=randread \
+    --bs="${BS}" \
+    --time_based=1 --runtime="${RUNTIME}" --direct="${DIRECT}" \
+    --ioengine="${IOENGINE}" --iodepth="${IODEPTH}" --numjobs=1 \
+    --offset="${job_offset_bytes}" --size="${SLICE_SIZE_BYTES}" \
+    --group_reporting=1 --eta=never \
+    --output-format=json --output="${out_json}" \
+    --iodepth_batch=8 --iodepth_batch_submit=8 \
+    --iodepth_batch_complete_min=8 --iodepth_batch_complete_max=64 \
+    --cpus_allowed="${core}" --cpus_allowed_policy=split \
+    > "${out_txt}" 2>&1 &
+    # --randrepeat="${RANDREPEAT}" --norandommap="${NORANDOMMAP}" \
+    # --log_avg_msec="${LOG_AVG_MSEC}" \
+    # --write_bw_log="${bw_log}" \
+    # --write_lat_log="${lat_log}" \
+done

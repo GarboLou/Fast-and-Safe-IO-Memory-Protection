@@ -3,10 +3,23 @@ import matplotlib.pyplot as plt
 import numpy as np
 import re
 import glob
+import os, sys, json
 
-flows = ["05", "40"]
-bss = ["4k", "8k", "16k", "64k", "256k", "2048k"]
-exp_configs = [f"-flow-{f}-fio-{bs}-" for f in flows for bs in bss]
+flow = 1
+ring_buffer = 0
+mtu = 0
+
+flows = ["10","20","40"]
+bss = ["16k"]
+flow_exp_configs = [f"-flow-{f}-fio-{bs}-" for f in flows for bs in bss]
+
+ring_buffers = ["0256", "0512", "1024", "2048"]
+ring_exp_configs = [f"-ring_buffer-{rb}-fio-{bs}-" for rb in ring_buffers for bs in bss]
+
+mtus = ["0256", "0512", "1500", "4000", "4096"]
+mtu_exp_configs = [f"-mtu-{m}-fio-{bs}-" for m in mtus for bs in bss]
+
+exp_configs = flow_exp_configs if flow == 1 else ring_exp_configs if ring_buffer == 1 else mtu_exp_configs
 
 def extract_bs(config):
     match = re.search(r"(4k|8k|16k|64k|256k|2048k)", config)
@@ -16,51 +29,48 @@ def get_ssd_tput(prefix, iommu_str, suffix=""):
     ssd_tputs = {}
     for config in exp_configs:
         bs = extract_bs(config)
-        folder = prefix + iommu_str + config + suffix + "-RUN-server-0"
-        # filename = f"../../utils/logs/{folder}/fio_bw_read_{bs}_bw.1.log"
-        # tputs = []
-        # with open(filename, "r") as file:
-        #     lines = file.readlines()
-        # tputs = [int(line.strip().split(",")[1]) for line in lines]
-        # if len(tputs) < 10:
-        #     raise ValueError(f"Not enough data points in {filename} to average last 5 lines.")
-        # # Take the last 5 lines and extract the second column (value)
-        # values = tputs[-7:-2]
-        # # Compute the average
-        # average = sum(values) / len(values)
-        # ssd_tputs[config] = average * 8 / 1000000
+        folder = "/fast-lab-share/jiaqil6/Fast-and-Safe-IO-Memory-Protection/utils/logs/" + prefix + iommu_str + config + suffix + "-RUN-server-0"
+        print(f"[INFO] Processing folder: {folder}", flush=True)
 
-        fio_log_prefix = f"../../utils/logs/{folder}/fio_bw_randread_{bs}_bw"
-        log_files = glob.glob(fio_log_prefix + ".*")
+        total_bw_bytes = 0
+        total_iops = 0.0
 
-        if not log_files:
-            return
+        files = sorted(glob.glob(os.path.join(folder, "rr*_bs*.json")))
+        if not files:
+            print(f"[WARN] No JSON outputs found in {folder}", flush=True)
+            sys.exit(0)
 
-        print(f"Found {len(log_files)} FIO logs to process.")
-
-        total_sum = 0.0
-        valid_files = 0
-
-        for logfile in log_files:
+        for f in files:
             try:
-                with open(logfile, "r") as f:
-                    lines = f.readlines()
-                    values = []
-                    for line in lines:
-                        parts = [p.strip() for p in line.strip().split(",")]
-                        if len(parts) > 1:
-                            try:
-                                val = int(parts[1])
-                                values.append(val)
-                            except ValueError:
-                                continue
-                    if values:
-                        avg = sum(values) / len(values)
-                        total_sum += avg
-                        valid_files += 1
+                with open(f, "r") as fh:
+                    for line in fh:
+                        if line.lstrip().startswith("{"):
+                            json_text = line + fh.read()  # include rest of file
+                            break
+                    else:
+                        raise ValueError("No JSON object found")
+                    d = json.loads(json_text)
             except Exception as e:
-                print(f"Error reading {logfile}: {e}")
-        ssd_tputs[config] = total_sum * 8 / 1000000  # Convert to Gbps
+                print(f"[WARN] Failed to parse {f}: {e}", flush=True)
+                continue
+
+            for j in d.get("jobs", []):
+                # r = j.get("read", {})
+                r = j.get("read", {})
+                bw_bytes = r.get("bw_bytes")
+                if bw_bytes is None:
+                    kbps = r.get("bw")  # KiB/s
+                    if kbps is not None:
+                        bw_bytes = int(kbps) * 1024
+                if bw_bytes is not None:
+                    total_bw_bytes += int(bw_bytes)
+                iops = r.get("iops")
+                if iops is not None:
+                    total_iops += float(iops)
+
+        Gbps = total_bw_bytes * 8 / (1000**3)
+        print(f"Aggregate for bs={bs}: {Gbps:.3f} Gbps, {total_iops:.0f} IOPS", flush=True)
+        ssd_tputs[config] = Gbps
 
     return ssd_tputs
 
@@ -102,7 +112,24 @@ def get_data_ring(prefix, iommu_str, suffix=""):
    
     x_labels =  ["0256", "0512", "1024", "2048"]
     folders = [
-        prefix + iommu_str + "-ring_buffer-"+ x for x in x_labels
+        prefix + iommu_str + config + suffix for config in ring_exp_configs
+    ]
+
+    files = [
+        "../../utils/reports/" + f + "/tput_metrics.dat" for f in folders
+    ]
+
+    data = [
+        parse_results(f) for f in files
+    ]
+    
+    return data
+
+
+def get_data_mtu(prefix, iommu_str, suffix=""):
+   
+    folders = [
+        prefix + iommu_str + config + suffix for config in mtu_exp_configs
     ]
 
     files = [
@@ -138,6 +165,7 @@ def get_misses_per_page(data):
     l1_miss_page = []
     l2_miss_page = []
     l3_miss_page = []
+    memory_access = []
 
     # acks_page = misses_per_page(sent_packets, tput)
     for idx in range(len(data)):
@@ -149,11 +177,36 @@ def get_misses_per_page(data):
         l2_miss_page.append(misses_per_page(data[idx]['l2_misses_mean'], tp))
         l3_miss_page.append(misses_per_page(data[idx]['l3_misses_mean'], tp))
         acks_page.append(misses_per_page(data[idx]['sent_packets_mean']/20, tp))
+
+        memory_access.append(data[idx]['mem_read_mean'])
     
-    return iotlb_miss_page, l1_miss_page, l2_miss_page, l3_miss_page, acks_page
+    return iotlb_miss_page, l1_miss_page, l2_miss_page, l3_miss_page, acks_page, memory_access
+
+def get_misses_raw_data(data):
+    # tput = data['net_tput_mean']
+    acks_page = []
+    iotlb_miss_page = []
+    l1_miss_page = []
+    l2_miss_page = []
+    l3_miss_page = []
+    memory_access = []
+
+    # acks_page = misses_per_page(sent_packets, tput)
+    for idx in range(len(data)):
+        # tp = data[idx]['net_tput_mean']
+        tp = data[idx]['pcie_wr_tput_mean']
+        
+        iotlb_miss_page.append((data[idx]['iotlb_misses_mean']))
+        l1_miss_page.append((data[idx]['l1_misses_mean']))
+        l2_miss_page.append((data[idx]['l2_misses_mean']))
+        l3_miss_page.append((data[idx]['l3_misses_mean']))
+        acks_page.append((data[idx]['sent_packets_mean']/20))
+        memory_access.append(data[idx]['mem_read_mean'])
+    
+    return iotlb_miss_page, l1_miss_page, l2_miss_page, l3_miss_page, acks_page, memory_access
 
 def plot_ssd_tput(iommu_off_data, iommu_on_data, x_labels, title):
-    plt.rcParams["font.size"] = 14
+    plt.rcParams["font.size"] = 16
     plt.figure(figsize=(14, 7))
     bar_width = 0.35
     # plt.plot(iommu_off_data, iommu_on_data)
@@ -161,7 +214,12 @@ def plot_ssd_tput(iommu_off_data, iommu_on_data, x_labels, title):
     plt.bar(x - bar_width/2, iommu_off_data, bar_width, label='IOMMU off')
     plt.bar(x + bar_width/2, iommu_on_data, bar_width, label='IOMMU on')
 
-    plt.xlabel("# of flows - block size")
+    if flow == 1:
+        plt.xlabel("# of flows - block size")
+    elif ring_buffer == 1:
+        plt.xlabel("Ring buffer size - block size")
+    elif mtu == 1:
+        plt.xlabel("MTU size - block size")
 
     plt.ylabel("SSD Throughput (Gbps)")
     plt.title(title)
@@ -174,7 +232,7 @@ def plot_ssd_tput(iommu_off_data, iommu_on_data, x_labels, title):
 
 
 def plot_tput(iommu_off_data, iommu_on_data, x_labels, title):
-    plt.rcParams["font.size"] = 14
+    plt.rcParams["font.size"] = 16
     plt.figure(figsize=(14, 7))
     bar_width = 0.35
     # plt.plot(iommu_off_data, iommu_on_data)
@@ -182,8 +240,12 @@ def plot_tput(iommu_off_data, iommu_on_data, x_labels, title):
     plt.bar(x - bar_width/2, iommu_off_data, bar_width, label='IOMMU off')
     plt.bar(x + bar_width/2, iommu_on_data, bar_width, label='IOMMU on')
 
-    plt.xlabel("# of flows - block size")
-
+    if flow == 1:
+        plt.xlabel("# of flows - block size")
+    elif ring_buffer == 1:
+        plt.xlabel("Ring buffer size - block size")
+    elif mtu == 1:
+        plt.xlabel("MTU size - block size")
     plt.ylabel("Throughput (Gbps)")
     plt.title(title + '-NIC')
     plt.xticks(x, x_labels)
@@ -194,8 +256,13 @@ def plot_tput(iommu_off_data, iommu_on_data, x_labels, title):
     plt.close()
 
 def plot_stacked_tput(ssd_off, nic_off, ssd_on, nic_on, x_labels, title):
-    plt.rcParams["font.size"] = 14
-    plt.figure(figsize=(14, 7))
+    print("ssd_off:", ssd_off)
+    print("nic_off:", nic_off)
+    print("ssd_on:", ssd_on)
+    print("nic_on:", nic_on)
+    
+    plt.rcParams["font.size"] = 18
+    plt.figure(figsize=(12, 7))
     bar_width = 0.35
     x = np.arange(len(x_labels))
 
@@ -207,18 +274,23 @@ def plot_stacked_tput(ssd_off, nic_off, ssd_on, nic_on, x_labels, title):
     plt.bar(x + bar_width/2, ssd_on, bar_width, label='SSD (IOMMU on)', color='orange')
     plt.bar(x + bar_width/2, nic_on, bar_width, bottom=ssd_on, label='NIC (IOMMU on)', color='darkorange')
 
-    plt.xlabel("# of flows - block size")
+    if flow == 1:
+        plt.xlabel("# of flows - block size")
+    elif ring_buffer == 1:
+        plt.xlabel("Ring buffer size - block size")
+    elif mtu == 1:
+        plt.xlabel("MTU size - block size")
     plt.ylabel("Throughput (Gbps)")
-    plt.ylim(0, 120)
+    plt.ylim(0, 160)
     plt.title(title)
     plt.xticks(x, x_labels, rotation=0)
     # plt.legend(loc='upper left', bbox_to_anchor=(1.02, 1.0), borderaxespad=0)
     plt.legend(
         loc='upper center',
-        bbox_to_anchor=(0.5, 1.15),  # center top, above figure
-        ncol=4,  # number of columns, adjust as needed
+        bbox_to_anchor=(0.5, 1.30),  # center top, above figure
+        ncol=2,  # number of columns, adjust as needed
         frameon=True,
-        fontsize=14
+        # fontsize=14
     )
     plt.tight_layout()
 
@@ -247,7 +319,12 @@ def plot_stacked_tput_individual(x_labels, title):
     plt.bar(x + bar_width/2, ssd_on,   bar_width, label='SSD (IOMMU on)', color='plum')
     plt.bar(x + bar_width/2, nic_on,   bar_width, bottom=ssd_on, label='NIC (IOMMU on)', color='tab:purple')
 
-    plt.xlabel("# of flows - block size")
+    if flow == 1:
+        plt.xlabel("# of flows - block size")
+    elif ring_buffer == 1:
+        plt.xlabel("Ring buffer size - block size")
+    elif mtu == 1:
+        plt.xlabel("MTU size - block size")
     plt.ylabel("Throughput (Gbps)")
     plt.ylim(0, 120)
     plt.title(title)
@@ -289,7 +366,12 @@ def plot_stacked_tput_compare(ssd_off, nic_off, ssd_on, nic_on, x_labels, title)
     plt.bar(x + bar_width/2*3, individual_ssd_on, bar_width, label='SUM(SR) SSD (IOMMU on)', color='plum')
     plt.bar(x + bar_width/2*3, individual_nic_on, bar_width, bottom=individual_ssd_on, label='SUM(SR) NIC (IOMMU on)', color='tab:purple')
 
-    plt.xlabel("# of flows - block size")
+    if flow == 1:
+        plt.xlabel("# of flows - block size")
+    elif ring_buffer == 1:
+        plt.xlabel("Ring buffer size - block size")
+    elif mtu == 1:
+        plt.xlabel("MTU size - block size")
     plt.ylabel("Throughput (Gbps)")
     plt.ylim(0, 120)
     plt.title(title)
@@ -317,8 +399,12 @@ def plot_drop_rate(iommu_off_data, iommu_on_data, x_labels, title):
     plt.bar(x - bar_width/2, iommu_off_data, bar_width, label='IOMMU off')
     plt.bar(x + bar_width/2, iommu_on_data, bar_width, label='IOMMU on')
 
-    plt.xlabel("# of flows - block size")
-
+    if flow == 1:
+        plt.xlabel("# of flows - block size")
+    elif ring_buffer == 1:
+        plt.xlabel("Ring buffer size - block size")
+    elif mtu == 1:
+        plt.xlabel("MTU size - block size")
     plt.ylabel("Drop rate")
     plt.title(title)
     plt.xticks(x, x_labels)
@@ -329,7 +415,7 @@ def plot_drop_rate(iommu_off_data, iommu_on_data, x_labels, title):
     plt.close()
 
 def plot_iommu_misses_stats(iommu_on_data, x_labels, title):
-    iotlb_miss_page, l1_miss_page, l2_miss_page, l3_miss_page, acks_page = get_misses_per_page(iommu_on_data)
+    iotlb_miss_page, l1_miss_page, l2_miss_page, l3_miss_page, acks_page, memory_access = get_misses_raw_data(iommu_on_data)
 
     plt.rcParams["font.size"] = 14
     plt.figure(figsize=(14, 7))
@@ -339,36 +425,44 @@ def plot_iommu_misses_stats(iommu_on_data, x_labels, title):
     plt.bar(x, iotlb_miss_page, bar_width, label='IOMMU TLB misses')
     # plt.bar(x + bar_width/2, iommu_on_data, bar_width, label='IOMMU on')
 
-    plt.xlabel("# of flows - block size")
-
-    plt.ylabel("IOTLB misses per page")
-    plt.title(title + 'IOTLB-miss')
+    if flow == 1:
+        plt.xlabel("# of flows - block size")
+    elif ring_buffer == 1:
+        plt.xlabel("Ring buffer size - block size")
+    elif mtu == 1:
+        plt.xlabel("MTU size - block size")
+    plt.ylabel("IOTLB misses")
+    plt.title(title + 'IOTLB-misses')
     plt.xticks(x, x_labels)
     plt.legend()
-    plt.ylim(0, 4)
+    # plt.ylim(0, 4)
 
 
     plt.tight_layout()
-    file_name = title + 'IOTLB-miss.png'
+    file_name = title + 'IOTLB-misses.png'
     plt.savefig(file_name)
     print('Saved plot to ' + file_name)
     plt.close()
 
 
-    # plot L1, L2, L3 misses
+    # plot L1, L2, L3 ACK
 
     plt.figure(figsize=(14, 7))
     x = np.arange(len(x_labels))
-    plt.bar(x, acks_page, bar_width, label='ACKs per page')
+    plt.bar(x, acks_page, bar_width, label='ACKs')
     # plt.bar(x + bar_width/2, iommu_on_data, bar_width, label='IOMMU on')
 
-    plt.xlabel("# of flows - block size")
-
-    plt.ylabel("Acks per page")
-    plt.title(title + 'IOTLB-miss')
+    if flow == 1:
+        plt.xlabel("# of flows - block size")
+    elif ring_buffer == 1:
+        plt.xlabel("Ring buffer size - block size")
+    elif mtu == 1:
+        plt.xlabel("MTU size - block size")
+    plt.ylabel("Acks")
+    plt.title(title + 'IOTLB-ACKs')
     plt.xticks(x, x_labels)
     plt.legend()
-    plt.ylim(0, 0.15)
+    # plt.ylim(0, 0.15)
 
 
     plt.tight_layout()
@@ -378,7 +472,7 @@ def plot_iommu_misses_stats(iommu_on_data, x_labels, title):
     plt.close()
 
 
-    # plot L1, L2, L3 misses
+    # plot L1, L2, L3 hits
     plt.figure(figsize=(14, 7))
     bar_width = 0.25
 
@@ -386,16 +480,45 @@ def plot_iommu_misses_stats(iommu_on_data, x_labels, title):
     plt.bar(x,              l2_miss_page, bar_width, label='L2')
     plt.bar(x + bar_width,  l3_miss_page, bar_width, label='L3')
     
-    plt.xlabel("# of flows - block size")
-
-    plt.ylabel("Misses per page")
-    plt.title(title + 'L1-L2-L3-miss')
+    if flow == 1:
+        plt.xlabel("# of flows - block size")
+    elif ring_buffer == 1:
+        plt.xlabel("Ring buffer size - block size")
+    elif mtu == 1:
+        plt.xlabel("MTU size - block size")
+    plt.ylabel("Hits")
+    plt.title(title + 'L1-L2-L3-hit')
     plt.xticks(x, x_labels)
     plt.legend()
-    plt.ylim(0, 0.5)
+    # plt.ylim(0, 0.5)
 
     plt.tight_layout()
-    file_name = title + 'L1-L2-L3-miss.png'
+    file_name = title + 'L1-L2-L3-hit.png'
+    plt.savefig(file_name)
+    print('Saved plot to ' + file_name)
+    plt.close()
+    
+    
+    # plot memory read accesses
+    plt.figure(figsize=(14, 7))
+    bar_width = 0.25
+
+    plt.bar(x, memory_access, bar_width, label='Memory Accesses')
+    
+    if flow == 1:
+        plt.xlabel("# of flows - block size")
+    elif ring_buffer == 1:
+        plt.xlabel("Ring buffer size - block size")
+    elif mtu == 1:
+        plt.xlabel("MTU size - block size")
+    plt.ylabel("Memory-Accesses")
+    plt.title(title + 'Memory-Accesses')
+    plt.xticks(x, x_labels)
+    plt.legend()
+    # plt.ylim(0, 0.5)
+
+    plt.tight_layout()
+    file_name = title + 'Memory-Accesses.png'
     plt.savefig(file_name)
     print('Saved plot to ' + file_name)
     plt.close()
@@ -419,18 +542,18 @@ def plot_all_subplots(iommu_off_all_data, iommu_on_all_data, x_labels, title_key
     plot_iommu_misses_stats(
         iommu_on_data = iommu_on_all_data,
         x_labels = x_labels,
-        title = title_key + '-misses'
+        title = title_key + '-'
     )
 
 def plot_tput_pips():
     x_labels =  [f"{f}-{bs}" for f in flows for bs in bss]
-    iommu_off_all_data = get_data(prefix="6.0.3-vanilla-", iommu_str="iommu-off", suffix="pips")
-    iommu_on_all_data = get_data(prefix="6.0.3-vanilla-", iommu_str="iommu-on", suffix="pips")
+    iommu_off_all_data = get_data(prefix="6.12.43-vanilla-", iommu_str="iommu-off", suffix="randread-client")
+    iommu_on_all_data = get_data(prefix="6.12.43-vanilla-", iommu_str="iommu-on", suffix="randread-client")
 
     plot_all_subplots(iommu_off_all_data, iommu_on_all_data, x_labels, 'PIPS-corun')
 
-    iommu_off_ssd_tput = get_ssd_tput(prefix="6.0.3-vanilla-", iommu_str="iommu-off", suffix="pips")
-    iommu_on_ssd_tput = get_ssd_tput(prefix="6.0.3-vanilla-", iommu_str="iommu-on", suffix="pips")
+    iommu_off_ssd_tput = get_ssd_tput(prefix="6.12.43-vanilla-", iommu_str="iommu-off", suffix="randread-client")
+    iommu_on_ssd_tput = get_ssd_tput(prefix="6.12.43-vanilla-", iommu_str="iommu-on", suffix="randread-client")
     plot_ssd_tput(
         iommu_off_data = iommu_off_ssd_tput.values(),
         iommu_on_data = iommu_on_ssd_tput.values(),
@@ -447,17 +570,70 @@ def plot_tput_pips():
         title = 'PIPS-corun-tput-SSD-NIC'
     )
 
-    plot_stacked_tput_individual(x_labels, 'PIPS-individual-run-sum-tput-NIC-SSD')
-    plot_stacked_tput_compare(ssd_off = list(iommu_off_ssd_tput.values()),
+    # plot_stacked_tput_individual(x_labels, 'PIPS-individual-run-sum-tput-NIC-SSD')
+    # plot_stacked_tput_compare(ssd_off = list(iommu_off_ssd_tput.values()),
+    #     nic_off = [r['net_tput_mean'] for r in iommu_off_all_data],
+    #     ssd_on = list(iommu_on_ssd_tput.values()),
+    #     nic_on = [r['net_tput_mean'] for r in iommu_on_all_data],
+    #     x_labels = x_labels,
+    #     title = 'PIPS-compare-corun-tput-SSD-NIC'
+    # )
+
+
+def plot_tput_pips_ring_buffer():
+    x_labels =  [f"{r}-{bs}" for r in ring_buffers for bs in bss]
+    iommu_off_all_data = get_data_ring(prefix="6.12.43-vanilla-", iommu_str="iommu-off", suffix="990pro")
+    iommu_on_all_data = get_data_ring(prefix="6.12.43-vanilla-", iommu_str="iommu-on", suffix="990pro")
+
+    plot_all_subplots(iommu_off_all_data, iommu_on_all_data, x_labels, 'PIPS-corun')
+
+    iommu_off_ssd_tput = get_ssd_tput(prefix="6.12.43-vanilla-", iommu_str="iommu-off", suffix="990pro")
+    iommu_on_ssd_tput = get_ssd_tput(prefix="6.12.43-vanilla-", iommu_str="iommu-on", suffix="990pro")
+    plot_ssd_tput(
+        iommu_off_data = iommu_off_ssd_tput.values(),
+        iommu_on_data = iommu_on_ssd_tput.values(),
+        x_labels = x_labels,
+        title = 'PIPS-corun-tput-SSD'
+    )
+
+    plot_stacked_tput(
+        ssd_off = list(iommu_off_ssd_tput.values()),
         nic_off = [r['net_tput_mean'] for r in iommu_off_all_data],
         ssd_on = list(iommu_on_ssd_tput.values()),
         nic_on = [r['net_tput_mean'] for r in iommu_on_all_data],
         x_labels = x_labels,
-        title = 'PIPS-compare-corun-tput-SSD-NIC'
+        title = 'PIPS-corun-tput-SSD-NIC'
     )
 
 
+def plot_tput_pips_mtu():
+    x_labels =  [f"{m}-{bs}" for m in mtus for bs in bss]
+    iommu_off_all_data = get_data_mtu(prefix="6.12.43-vanilla-", iommu_str="iommu-off", suffix="990pro")
+    iommu_on_all_data = get_data_mtu(prefix="6.12.43-vanilla-", iommu_str="iommu-on", suffix="990pro")
 
+    plot_all_subplots(iommu_off_all_data, iommu_on_all_data, x_labels, 'PIPS-corun')
 
-plot_tput_pips()
+    iommu_off_ssd_tput = get_ssd_tput(prefix="6.12.43-vanilla-", iommu_str="iommu-off", suffix="990pro")
+    iommu_on_ssd_tput = get_ssd_tput(prefix="6.12.43-vanilla-", iommu_str="iommu-on", suffix="990pro")
+    plot_ssd_tput(
+        iommu_off_data = iommu_off_ssd_tput.values(),
+        iommu_on_data = iommu_on_ssd_tput.values(),
+        x_labels = x_labels,
+        title = 'PIPS-corun-tput-SSD'
+    )
 
+    plot_stacked_tput(
+        ssd_off = list(iommu_off_ssd_tput.values()),
+        nic_off = [r['net_tput_mean'] for r in iommu_off_all_data],
+        ssd_on = list(iommu_on_ssd_tput.values()),
+        nic_on = [r['net_tput_mean'] for r in iommu_on_all_data],
+        x_labels = x_labels,
+        title = 'PIPS-corun-tput-SSD-NIC'
+    )
+
+if flow == 1:
+    plot_tput_pips()
+elif ring_buffer == 1:
+    plot_tput_pips_ring_buffer()
+elif mtu == 1:
+    plot_tput_pips_mtu()
